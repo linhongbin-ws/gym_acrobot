@@ -63,7 +63,7 @@ class AcrobotBmt(core.Env):
     dt = .2
 
     LINK_LENGTH_1 = 1.  # [m]
-    LINK_LENGTH_2 = 1.  # [m]
+    LINK_LENGTH_2 = 2.  # [m]
     LINK_MASS_1 = 1.  #: [kg] mass of link 1
     LINK_MASS_2 = 1.  #: [kg] mass of link 2
     LINK_COM_POS_1 = 0.5  #: [m] position of the center of mass of link 1
@@ -97,7 +97,8 @@ class AcrobotBmt(core.Env):
         return [seed]
 
     def reset(self):
-        self.state = self.np_random.uniform(low=-0.1, high=0.1, size=(4,))
+        #self.state = self.np_random.uniform(low=-1.0, high=1.0, size=(4,))
+        self.state = np.radians(np.array([[80],[30],[0],[0]]))
         return self._get_ob()
 
     def step(self, a):
@@ -112,7 +113,7 @@ class AcrobotBmt(core.Env):
         # _dsdt
         s_augmented = np.append(s, torque)
 
-        ns = rk4(self._dsdt, s_augmented, [0, self.dt])
+        ns = rk4(self._dynamicEquation, s_augmented, [0, self.dt])
         # only care about final timestep of integration returned by integrator
         ns = ns[-1]
         ns = ns[:4]  # omit action
@@ -173,6 +174,72 @@ class AcrobotBmt(core.Env):
         ddtheta1 = -(d2 * ddtheta2 + phi1) / d1
         return (dtheta1, dtheta2, ddtheta1, ddtheta2, 0.)
 
+    # replace function _dsdt with a new function that are more closed to Acrobot in Bmt
+    def _dynamicEquation(self, s_augmented, t):
+        m1 = 1
+        m2 = 1
+        l1 = 1
+        l2 = 2
+        lc1 = l1/2
+        lc2 = l2/2
+        Ic1 = 0.083
+        Ic2 = 0.33
+        I1 = Ic1 + m1*lc1**2
+        I2 = Ic2 + m2*lc2**2
+        f1 = 0.1
+        f2 = 0.1
+
+
+        g = 9.8
+        a = s_augmented[-1]
+        s = s_augmented[:-1]
+        q1 = s[0]
+        q2 = s[1]
+        q = np.array([[q1],[q2]])
+        qd1 = s[2]
+        qd2 = s[3]
+        qd = np.array([[qd1], [qd2]])
+        s1 = sin(q1)
+        s2 = sin(q2)
+        c1 = cos(q1)
+        c2 = cos(q2)
+        s12 = sin(q1+q2)
+
+        # frequent variable
+        m2l1lc2 = m2*l1*lc2
+        # inertia matrix
+        M11 = I1 + I2 + m2 * l1 ** 2 + 2 * m2l1lc2 * c2
+        M12 = I2 + m2l1lc2 * c2
+        M21 = M12
+        M22 = I2
+        M = np.array([[M11,M12],[M21,M22]])
+
+        # Coriolis and centrifigual matrix
+        C11 = -2 * m2l1lc2 * s2 * qd2;
+        C12 = -m2l1lc2 * s2 * qd2;
+        C21 = m2l1lc2 * s2 * qd1;
+        C22 = 0;
+        C = np.array([[C11,C12],[C21,C22]])
+
+        # gravitation term
+        G1 = g * (m1 * lc1 * s1 + m2 * (l1 * s1 + lc2 * s12))
+        G2 = g * m2 * lc2 * s12
+        G = np.array([[G1],[G2]])
+
+
+        # friction force
+        F1 = f1
+        F2 = f2
+        F = np.array([[f1, 0.0], [0.0, f2]])
+
+
+        # action torque
+        A = np.array([[a],[0.]])
+        tmp = A-C.dot(qd)-G-F.dot(qd)
+        ddq = np.linalg.inv(M).dot(tmp)
+
+        return (qd1, qd2, ddq[0][0], ddq[1][0], 0.)
+
     def render(self, mode='human'):
         from gym.envs.classic_control import rendering
 
@@ -201,9 +268,9 @@ class AcrobotBmt(core.Env):
             jtransform = rendering.Transform(rotation=th, translation=(x,y))
             link = self.viewer.draw_polygon([(l,b), (l,t), (r,t), (r,b)])
             link.add_attr(jtransform)
-            link.set_color(0,.8, .8)
+            link.set_color(.5, .3, 0.0)
             circ = self.viewer.draw_circle(.1)
-            circ.set_color(.8, .8, 0)
+            circ.set_color(.6, .6, .8)
             circ.add_attr(jtransform)
 
         return self.viewer.render(return_rgb_array = mode=='rgb_array')
